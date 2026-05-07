@@ -36,7 +36,6 @@ def classify_rt_median(median_ms: float, age_group: str) -> dict:
     """Return severity label and description for a reaction-time median."""
     age_group = age_group.lower()
 
-    # Map age_group string → column index 0,1,2
     if age_group in ("50-64", "50_64"):
         col = 0
     elif age_group in ("65-74", "65_74"):
@@ -46,8 +45,6 @@ def classify_rt_median(median_ms: float, age_group: str) -> dict:
     else:
         raise ValueError(f"Unknown age_group: {age_group!r}. Use '50-64', '65-74', or '75+'")
 
-    # Table rows: (upper_bound_exclusive, labels_by_column)
-    # label order: [50-64, 65-74, 75+]
     table = [
         (280,  ["normal",   "normal",   "normal"]),
         (350,  ["normal",   "normal",   "watch"]),
@@ -124,8 +121,8 @@ class RTSubmitRequest(BaseModel):
     patient_id: str
     age_group: str = Field(..., description="One of: '50-64', '65-74', '75+'")
     reaction_times_ms: List[float] = Field(
-        ..., min_length=10, max_length=10,
-        description="Exactly 10 reaction-time readings in milliseconds"
+        ..., min_length=5, max_length=5,
+        description="Exactly 5 reaction-time readings in milliseconds"
     )
 
     @field_validator("reaction_times_ms")
@@ -154,7 +151,7 @@ class RTResult(BaseModel):
 @app.post("/api/v1/reaction-time/submit", response_model=RTResult, tags=["Sub-test A"])
 def submit_reaction_time(req: RTSubmitRequest):
     """
-    Submit 10 reaction-time readings (ms) and receive a full analysis.
+    Submit 5 reaction-time readings (ms) and receive a full analysis.
 
     - **median_ms** – primary metric (robust to outliers)
     - **sd_ms** – variability; elevated SD can flag attention lapses before the median rises
@@ -162,7 +159,8 @@ def submit_reaction_time(req: RTSubmitRequest):
     rts = req.reaction_times_ms
     median_ms = statistics.median(rts)
     mean_ms   = statistics.mean(rts)
-    sd_ms     = statistics.stdev(rts)  # n-1
+    # stdev requires n >= 2; with exactly 5 samples this is always safe
+    sd_ms     = statistics.stdev(rts)
 
     try:
         median_cls = classify_rt_median(median_ms, req.age_group)
@@ -199,8 +197,8 @@ def get_trial_timing(trial_number: int = 1):
     Call this before showing the stimulus circle in Flutter so the delay
     is server-authoritative (prevents cheating / logging).
     """
-    if not 1 <= trial_number <= 10:
-        raise HTTPException(status_code=422, detail="trial_number must be 1–10")
+    if not 1 <= trial_number <= 5:
+        raise HTTPException(status_code=422, detail="trial_number must be 1–5")
     delay_ms = random.randint(2000, 6000)
     return TrialTimingResponse(
         trial_number=trial_number,
@@ -246,7 +244,6 @@ def submit_digit_span(req: DigitSpanRequest):
     bwd_cls = classify_backward_span(req.backward_span)
     gap_cls = classify_span_gap(gap)
 
-    # Build a plain-language summary
     severities = {fwd_cls["severity"], bwd_cls["severity"], gap_cls["severity"]}
     if "critical" in severities:
         overall = "🚨 Critical — immediate clinical follow-up recommended"
@@ -307,7 +304,7 @@ def get_digit_sequence(length: int = 3):
 class Domain5FullRequest(BaseModel):
     patient_id: str
     age_group: str
-    reaction_times_ms: List[float] = Field(..., min_length=10, max_length=10)
+    reaction_times_ms: List[float] = Field(..., min_length=5, max_length=5)
     forward_span: int = Field(..., ge=0, le=10)
     backward_span: int = Field(..., ge=0, le=10)
 
@@ -342,7 +339,6 @@ def submit_domain5(req: Domain5FullRequest):
         )
     )
 
-    # Combine severities across all sub-tests
     all_severities = [
         rt_result.median_classification["severity"],
         rt_result.variability_classification["severity"],
